@@ -17,6 +17,7 @@ use tokio::net::UnixListener;
 use tracing::info;
 
 mod listener;
+mod serve;
 use listener::{
     AuthenticatedUnixIncoming, prepare_compute_driver_socket, restrict_socket_permissions,
     shutdown_signal,
@@ -294,6 +295,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if let Some(code) = serve::dispatch().await {
+        std::process::exit(code);
+    }
     let args = Args::parse();
     if let Some(request) = args.internal_prepare_image {
         openshell_driver_vm::driver::run_image_preparation_worker(&request)

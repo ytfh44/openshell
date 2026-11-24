@@ -2,7 +2,7 @@
 
 > Status: Experimental. The VM compute driver is under active development.
 
-Standalone libkrun-backed [`ComputeDriver`](../../proto/compute_driver.proto) for OpenShell. The gateway spawns this binary as a subprocess and talks to it over the `openshell.compute.v1.ComputeDriver` Unix-socket surface. `openshell-supervisor` runs as a native host process, while `openshell-sandbox` runs as capability-free PID 1 inside each microVM and applies guest-local isolation over virtio-vsock.
+Standalone libkrun-backed [`ComputeDriver`](../../proto/compute_driver.proto) for OpenShell. The gateway spawns this binary as `serve`, passes the `[openshell.drivers.vm]` table on stdin and gateway metadata in a `Configure` call (`proto/driver_launch.proto`), and talks to it over the `openshell.compute.v1.ComputeDriver` Unix-socket surface. `openshell-supervisor` runs as a native host process, while `openshell-sandbox` runs as capability-free PID 1 inside each microVM and applies guest-local isolation over virtio-vsock.
 
 New VM generations initiate the control connection to host CID 2 over vsock.
 Libkrun forwards that guest connection to the supervisor's protected Unix
@@ -20,13 +20,13 @@ Caller driver config is disabled by default, including upload workflows
 encoded in driver JSON. GPU devices and their trusted VFIO plumbing are
 temporarily exempt from approval labels; existing GPU selection validation
 still applies. Private rootfs staging does not authorize arbitrary host paths.
-The gateway passes its common policy to its managed VM subprocess.
+The gateway's table, which holds the common policy, reaches the managed VM subprocess unparsed on stdin.
 See [resource admission configuration](../../docs/how-it-works/gateways/configuration.mdx#external-resource-admission).
 
 ```mermaid
 flowchart LR
     subgraph host["Host"]
-        gateway["openshell-gateway<br/>(vm::spawn)"]
+        gateway["openshell-gateway<br/>(launcher)"]
         driver["openshell-driver-vm<br/>libkrun"]
         supervisor["openshell-supervisor<br/>host policy supervisor"]
         gateway <-->|"gRPC over UDS<br/>compute-driver.sock"| driver
@@ -341,3 +341,12 @@ so driver choice remains automatic unless the user explicitly overrides it.
 
 - The gateway still configures the driver via CLI args; this will move to a gRPC bootstrap call so the driver interface is uniform across backends. See the `TODO(driver-abstraction)` note in `crates/openshell-gateway/src/vm.rs`.
 - macOS local builds are codesigned by `tasks/scripts/gateway-vm.sh`; the generated Homebrew formula signs the release tarball driver for local installs.
+
+## Launched mode
+
+```text
+openshell-driver-vm serve --bind-socket <path> --expected-peer-pid <pid> --log-level <level>   < table.toml
+openshell-driver-vm preflight                                                                  < table.toml
+```
+
+`settings_from_table` in `src/settings.rs` is the only place the table is parsed and validated. `serve` exits 78 on an invalid table. A setting the table leaves unset still falls back to the driver's environment variable (for example `OPENSHELL_VM_UPSTREAM_PROXY`), as it did when the gateway passed flags. The table rejects `guest_tls_ca`, `gateway_port` and the admission keys, which the gateway supplies in `Configure`. The driver binds its socket and answers `GetLaunchInfo` at once, but `ComputeDriver` calls return `UNAVAILABLE` and no VM state is created until `Configure` succeeds. `preflight` validates the table and exits.
