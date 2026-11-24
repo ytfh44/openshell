@@ -335,6 +335,12 @@ rec {
         artifacts/binaries/${gnuToolchain.target}/openshell-supervisor \
         deploy/docker/.build/prebuilt-binaries/${dockerArch}/openshell-supervisor
 
+      for driver in openshell-driver-docker openshell-driver-podman; do
+        install -D -m 0755 \
+          artifacts/binaries/${gnuToolchain.target}/$driver \
+          deploy/docker/.build/prebuilt-binaries/${dockerArch}/$driver
+      done
+
       install -D -m 0755 \
         artifacts/binaries/${muslToolchain.target}/openshell-sandbox \
         deploy/docker/.build/prebuilt-binaries/${dockerArch}/openshell-sandbox
