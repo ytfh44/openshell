@@ -5045,6 +5045,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "openshell-driver-launch"
+version = "0.0.0"
+dependencies = [
+ "http 1.4.0",
+ "prost",
+ "protoc-bin-vendored",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower",
+]
+
+[[package]]
 name = "openshell-driver-mxc"
 version = "0.0.0"
 dependencies = [
