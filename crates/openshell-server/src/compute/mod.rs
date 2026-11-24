@@ -561,9 +561,23 @@ const ORPHAN_GRACE_PERIOD: Duration = Duration::from_mins(5);
 // Re-export the shared error type under the name used by this module.
 pub use openshell_core::ComputeDriverError as ComputeError;
 
+/// The process a managed driver runs as.
+#[derive(Debug)]
+enum DriverChild {
+    Tokio(tokio::process::Child),
+}
+
+impl DriverChild {
+    fn id(&self) -> Option<u32> {
+        match self {
+            Self::Tokio(child) => child.id(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ManagedDriverProcess {
-    child: std::sync::Mutex<Option<tokio::process::Child>>,
+    child: std::sync::Mutex<Option<DriverChild>>,
     socket_path: PathBuf,
 }
 
@@ -571,7 +585,7 @@ impl ManagedDriverProcess {
     #[cfg(unix)]
     pub fn new(child: tokio::process::Child, socket_path: PathBuf) -> Self {
         Self {
-            child: std::sync::Mutex::new(Some(child)),
+            child: std::sync::Mutex::new(Some(DriverChild::Tokio(child))),
             socket_path,
         }
     }
@@ -587,7 +601,7 @@ impl ManagedDriverProcess {
             .lock()
             .map_err(|_| "managed compute-driver process lock poisoned".to_string())?
             .take();
-        let Some(mut child) = child else {
+        let Some(child) = child else {
             return Ok(());
         };
 
@@ -598,19 +612,24 @@ impl ManagedDriverProcess {
             return Err(format!("failed to terminate managed compute driver: {err}"));
         }
 
-        match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
-            Ok(Ok(_)) => Ok(()),
-            Ok(Err(err)) => Err(format!("failed to wait for managed compute driver: {err}")),
-            Err(_) => {
-                child
-                    .kill()
-                    .await
-                    .map_err(|err| format!("failed to kill managed compute driver: {err}"))?;
-                child
-                    .wait()
-                    .await
-                    .map(|_| ())
-                    .map_err(|err| format!("failed to reap managed compute driver: {err}"))
+        match child {
+            DriverChild::Tokio(mut child) => {
+                match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(err)) => {
+                        Err(format!("failed to wait for managed compute driver: {err}"))
+                    }
+                    Err(_) => {
+                        child.kill().await.map_err(|err| {
+                            format!("failed to kill managed compute driver: {err}")
+                        })?;
+                        child
+                            .wait()
+                            .await
+                            .map(|_| ())
+                            .map_err(|err| format!("failed to reap managed compute driver: {err}"))
+                    }
+                }
             }
         }
     }
