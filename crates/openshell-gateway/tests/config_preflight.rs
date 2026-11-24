@@ -47,9 +47,15 @@ impl Fixture {
     }
 
     fn tool(&self, name: &str, body: &str) {
+        // Write and close a temporary file, then rename it into place. A
+        // script another test's fork could still hold open for writing fails
+        // to execute with ETXTBSY.
         let path = self.tools.join(name);
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("tool fixture");
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("executable fixture");
+        let temporary = self.tools.join(format!("{name}.tmp"));
+        fs::write(&temporary, format!("#!/bin/sh\n{body}\n")).expect("tool fixture");
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o755))
+            .expect("executable fixture");
+        fs::rename(temporary, path).expect("install fixture");
     }
 
     fn command(&self, replay: &[&str]) -> tokio::process::Command {
