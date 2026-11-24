@@ -5125,6 +5125,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "openshell-driver-sdk"
+version = "0.0.0"
+dependencies = [
+ "http 1.4.0",
+ "libc",
+ "nix 0.29.0",
+ "openshell-core",
+ "openshell-crypto",
+ "openshell-driver-launch",
+ "openshell-otel",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tonic",
+]
+
+[[package]]
 name = "openshell-driver-vault"
 version = "0.0.0"
 dependencies = [
