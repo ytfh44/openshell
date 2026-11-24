@@ -295,10 +295,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - package: openshell-driver-docker
-            binary: openshell-driver-docker
-            triple: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
           - package: openshell-driver-kubernetes
             binary: openshell-driver-kubernetes
             triple: x86_64-unknown-linux-gnu
@@ -537,6 +533,7 @@ jobs:
       checkout-ref: ${{ needs.pr_metadata.outputs.sha }}
       prebuilt-conformance: true
       image-tag: ${{ needs.pr_metadata.outputs.sha }}
+      external-driver-binary: openshell-driver-docker
       runner: ubuntu-24.04-arm
 
   podman-e2e:

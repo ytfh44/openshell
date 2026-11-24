@@ -1557,7 +1557,7 @@ nat64_prefixes         = ["2001:db8:64::/96"]
 
 ### Launched drivers
 
-The gateway launches the VM and Podman drivers as subprocesses. Each driver reads and validates its own `[openshell.drivers.<name>]` table, so the keys in the table stay the same.
+The gateway launches the VM, Podman, and Docker drivers as subprocesses. Each driver reads and validates its own `[openshell.drivers.<name>]` table, so the keys in the table stay the same.
 
 The gateway starts `openshell-driver-<name> serve` and passes the table as text on the driver's standard input. After the driver accepts a connection, the gateway sends gateway-owned values over the private socket: the gateway port and listener, gateway name, guest CA path, trusted runtime images from the environment, destination trust, OTLP settings, and the admission policy. The command line carries only the socket path, the gateway's process ID, and the log level. Trace headers and other secrets never appear in arguments or the environment.
 
@@ -1567,7 +1567,7 @@ The gateway owns the admission policy (`allow_driver_config` and `resource_admis
 
 Set `driver_dir` in `[openshell.gateway]`. A `driver_dir` in a driver table is deprecated: the gateway removes it with a warning and uses it only when `[openshell.gateway]` sets none. The gateway looks for the driver binary in `driver_dir`, then in `~/.local/libexec/openshell`, `/usr/libexec/openshell`, `/usr/local/libexec/openshell`, and `/usr/local/libexec`, then next to the gateway binary. The binary must not be writable by group or others.
 
-When no driver is selected, the gateway tries Kubernetes, then Podman, then Docker. For Podman it starts the driver with the operator's table, so a configured `socket_path` is honored. The first driver that binds its socket is kept and configured, so detection never starts a driver it then stops. A Podman table that is invalid, or a socket that is not reachable, moves detection to the next candidate and logs the reason. A driver that crashes or times out stops startup. If a driver is selected by name, any such failure stops startup, except that Podman is started again a few times while its socket is unreachable, as the in-process driver retried.
+When no driver is selected, the gateway tries Kubernetes, then Podman, then Docker. For Podman and Docker it starts the driver with the operator's table, so a configured `socket_path` is honored. The first driver that binds its socket is kept and configured, so detection never starts a driver it then stops. For Docker it does the same with the Docker table. A table that is invalid, or a socket that is not reachable, moves detection to the next candidate and logs the reason. A driver that crashes or times out stops startup. If a driver is selected by name, any such failure stops startup, except that Podman is started again a few times while its socket is unreachable, as the in-process driver retried.
 
 Each launch gets its own private socket directory, which goes away with the driver. If a launched driver exits while the gateway is running, the gateway logs an error and exits with a nonzero status. Running sandboxes continue.
 

@@ -18,7 +18,7 @@ use crate::launcher::{self, ConfigureInputs, LaunchOutcome, LaunchRequest, Prefl
 
 const DRIVER_BIN_NAME: &str = "openshell-driver-vm";
 const COMPUTE_DRIVER_SOCKET_RUN_DIR: &str = "run";
-const DRIVER_BIN_HINT: &str = "install it under [openshell.drivers.vm].driver_dir, a conventional libexec path such as ~/.local/libexec/openshell, /usr/libexec/openshell, or /usr/local/libexec{,/openshell}, or place it next to the gateway binary";
+const DRIVER_BIN_HINT: &str = "set driver_dir in [openshell.gateway], install it in a conventional libexec path such as ~/.local/libexec/openshell, /usr/libexec/openshell, or /usr/local/libexec{,/openshell}, or place it next to the gateway binary";
 
 /// The gateway's view of the `[openshell.drivers.vm]` table.
 #[derive(Debug, Clone, PartialEq, Eq)]

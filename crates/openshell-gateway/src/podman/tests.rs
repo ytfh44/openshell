@@ -4,6 +4,8 @@
 use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 
+use std::path::{Path, PathBuf};
+
 use super::*;
 
 fn table(text: &str) -> toml::map::Map<String, toml::Value> {
@@ -24,14 +26,14 @@ fn driver(dir: &Path, body: &str) {
         .unwrap();
     file.sync_all().unwrap();
     drop(file);
-    std::fs::rename(temporary, dir.join(DRIVER_BIN_NAME)).unwrap();
+    std::fs::rename(temporary, dir.join("openshell-driver-podman")).unwrap();
 }
 
 fn detect_with(body: &str, extra: &str) -> DriverDetection {
     let dir = tempfile::tempdir().unwrap();
     driver(dir.path(), body);
     let table = table(extra);
-    detect_in(
+    PODMAN.detect(
         &DriverDetectionContext {
             table: &table,
             driver_dir: Some(dir.path()),
@@ -43,7 +45,7 @@ fn detect_with(body: &str, extra: &str) -> DriverDetection {
 
 #[test]
 fn gateway_owned_keys_are_removed_and_the_rest_is_forwarded() {
-    let plan = PodmanLaunchPlan::from_table(
+    let plan = PODMAN.plan(
         table(
             "driver_dir = \"/opt/drivers\"\nsocket_path = \"/run/podman.sock\"\nnetwork_name = \"n\"",
         ),
@@ -56,7 +58,7 @@ fn gateway_owned_keys_are_removed_and_the_rest_is_forwarded() {
     assert!(!forwarded.contains_key("driver_dir"));
     assert_eq!(forwarded["socket_path"].as_str(), Some("/run/podman.sock"));
     assert_eq!(forwarded["network_name"].as_str(), Some("n"));
-    assert!(PodmanLaunchPlan::from_table(table("driver_dir = 3"), None).is_err());
+    assert!(PODMAN.plan(table("driver_dir = 3"), None).is_err());
 }
 
 #[test]
@@ -108,7 +110,7 @@ fn detection_keeps_the_driver_it_started_and_stops_it_if_unused() {
         gateway_log_level: "info",
     };
 
-    let result = detect_in(&context, &dir.path().join("run"));
+    let result = PODMAN.detect(&context, &dir.path().join("run"));
 
     let DriverDetection::Available(Some(detected)) = result else {
         panic!("a driver that binds its socket is available and kept");
@@ -137,7 +139,7 @@ fn detection_keeps_the_driver_it_started_and_stops_it_if_unused() {
 fn a_missing_driver_binary_is_unavailable() {
     let dir = tempfile::tempdir().unwrap();
     let table = table("");
-    let result = detect_in(
+    let result = PODMAN.detect(
         &DriverDetectionContext {
             table: &table,
             driver_dir: Some(dir.path()),
@@ -150,7 +152,7 @@ fn a_missing_driver_binary_is_unavailable() {
 
 #[test]
 fn the_admission_policy_is_not_forwarded_in_the_driver_table() {
-    let plan = PodmanLaunchPlan::from_table(
+    let plan = PODMAN.plan(
         table("allow_driver_config = true\n[resource_admission]\nenabled = false\nrequired_labels = {}\n"),
         None,
     )
@@ -165,11 +167,12 @@ fn the_admission_policy_is_not_forwarded_in_the_driver_table() {
 
 #[test]
 fn a_legacy_gateway_port_is_dropped_so_the_driver_can_stay_strict() {
-    let plan = PodmanLaunchPlan::from_table(
-        table("gateway_port = 8080\nsocket_path = \"/run/podman.sock\""),
-        None,
-    )
-    .unwrap();
+    let plan = PODMAN
+        .plan(
+            table("gateway_port = 8080\nsocket_path = \"/run/podman.sock\""),
+            None,
+        )
+        .unwrap();
     assert!(!plan.table.contains("gateway_port"), "{}", plan.table);
     assert!(plan.table.contains("socket_path"));
 }
@@ -184,4 +187,10 @@ fn a_launch_error_stops_detection_instead_of_looking_like_an_absent_backend() {
     );
     drop(dir);
     assert!(matches!(result, DriverDetection::Failed(reason) if reason.contains("claims absent")));
+}
+
+#[test]
+fn podman_launches_from_its_own_socket_directory() {
+    let podman = PODMAN.socket_dir();
+    assert!(podman.ends_with("run/podman"), "{}", podman.display());
 }

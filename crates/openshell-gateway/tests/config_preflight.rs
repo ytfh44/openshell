@@ -291,6 +291,11 @@ async fn vm_table_without_selection_does_not_probe_tools() {
 async fn unrelated_driver_does_not_require_vm_tools() {
     let fixture = Fixture::new();
     fixture.tool("mke2fs", "exit 42");
+    // Docker validates its own table through its `preflight` command.
+    fixture.tool(
+        "openshell-driver-docker",
+        "while read -r _; do :; done\ntest \"$1\" = preflight",
+    );
     let output = fixture.run(&["--compute-driver", "docker"]).await;
     assert!(output.status.success(), "{}", combined(&output));
     assert!(!combined(&output).contains("VM host tool"));
