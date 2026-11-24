@@ -21,13 +21,11 @@ use std::process::Output;
 use std::time::Duration;
 
 /// Drivers with an upstream proxy table that the gateway validates itself.
-/// The launched VM driver validates its own table, which its settings tests
-/// cover.
+/// The launched VM and Podman drivers validate their own tables, which their
+/// settings tests cover.
 const DRIVERS: &[&str] = &[
     #[cfg(feature = "compute-driver-docker")]
     "docker",
-    #[cfg(feature = "compute-driver-podman")]
-    "podman",
 ];
 
 struct Fixture {

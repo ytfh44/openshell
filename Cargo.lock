@@ -5255,7 +5255,6 @@ dependencies = [
  "openshell-driver-kubernetes",
  "openshell-driver-launch",
  "openshell-driver-mxc",
- "openshell-driver-podman",
  "openshell-driver-sdk",
  "openshell-otel",
  "openshell-otel-test-support",

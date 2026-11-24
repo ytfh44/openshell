@@ -18,6 +18,8 @@ compile_error!(
 
 #[cfg(all(not(target_os = "windows"), feature = "driver-launcher"))]
 mod launcher;
+#[cfg(all(not(target_os = "windows"), feature = "compute-driver-podman"))]
+mod podman;
 #[cfg(all(not(target_os = "windows"), feature = "compute-driver-vm"))]
 mod vm;
 
@@ -196,16 +198,12 @@ fn install_in_tree_compute_drivers(registry: &mut ComputeDriverRegistry) {
                 .with_in_process_tracing(openshell_driver_kubernetes::otel_tracing::TRACING)
         }),
         #[cfg(feature = "compute-driver-podman")]
-        ComputeDriverRegistration::new(
-            "podman",
-            200,
-            Some(openshell_driver_podman::driver::is_available),
-            PodmanFactory,
-        )
-        .map(|registration| {
+        ComputeDriverRegistration::new("podman", 200, None, PodmanFactory).map(|registration| {
             registration
                 .with_telemetry_category(TelemetryComputeDriver::anonymous_category("podman"))
-                .with_in_process_tracing(openshell_driver_podman::otel_tracing::TRACING)
+                // Detection starts the driver with the operator's table, so a
+                // configured socket_path is honoured.
+                .with_table_detection(podman::detect)
         }),
         #[cfg(feature = "compute-driver-docker")]
         ComputeDriverRegistration::new(
@@ -485,54 +483,39 @@ impl openshell_server::ComputeDriverFactory for PodmanFactory {
         &self,
         context: openshell_server::ComputeDriverConfigContext<'_>,
     ) -> openshell_core::Result<()> {
-        podman_config(context)?
-            .validate_configuration()
-            .map_err(|error| openshell_core::Error::config(error.to_string()))
+        self.admission_policy(context)?;
+        podman::validate(&podman_launch_plan(context)?)
     }
 
     async fn build(
         &self,
         context: openshell_server::ComputeDriverBuildContext<'_>,
     ) -> openshell_core::Result<openshell_server::ComputeDriverInstance> {
-        let mut config = podman_config(context.config_context())?;
-        config.supervisor_otlp = context
-            .otlp_config()
-            .map(OtlpConfig::supervisor_otlp)
-            .unwrap_or_default();
-        config.supervisor_gateway_name = Some(context.gateway_name().to_string());
+        let plan = podman_launch_plan(context.config_context())?;
         require_guest_tls_for_local_driver(&context, "podman")?;
-        apply_guest_tls(&mut config.guest_tls_ca, context.guest_tls_ca());
-        let driver = openshell_driver_podman::PodmanComputeDriver::new(
-            config,
-            context.network_trust_bundle().cloned(),
-        )
-        .await
-        .map_err(|error| openshell_core::Error::execution(error.to_string()))?;
-        let driver = openshell_driver_podman::ComputeDriverService::new_in_process(driver);
-        Ok(openshell_server::ComputeDriverInstance::InProcess(
-            std::sync::Arc::new(driver),
+        let admission = self.admission_policy(context.config_context())?;
+        // Auto-detection already started the driver; configure that process.
+        let detected = context.take_detected_driver::<launcher::Started>();
+        let inputs = launcher::ConfigureInputs::from_environment(
+            context.gateway_bind_address(),
+            context.guest_tls_ca(),
+            context.gateway_name(),
+            context.network_trust_bundle(),
+            context.otlp_config(),
+            Some(&admission),
+        );
+        let endpoint = podman::spawn(&plan, detected, context.gateway_log_level(), &inputs).await?;
+        Ok(openshell_server::ComputeDriverInstance::ManagedRemote(
+            endpoint,
         ))
     }
 }
 
 #[cfg(all(not(target_os = "windows"), feature = "compute-driver-podman"))]
-fn podman_config(
+fn podman_launch_plan(
     context: openshell_server::ComputeDriverConfigContext<'_>,
-) -> openshell_core::Result<openshell_driver_podman::PodmanComputeConfig> {
-    let mut config: openshell_driver_podman::PodmanComputeConfig = context.driver_config()?;
-    config.gateway_port = context.gateway_port();
-    config.sandbox_runtime_image = prefer_environment(
-        config.sandbox_runtime_image,
-        std::env::var(openshell_core::config::SANDBOX_RUNTIME_IMAGE_ENV).ok(),
-    );
-    config.supervisor_image = prefer_environment(
-        config.supervisor_image,
-        std::env::var(openshell_core::config::SUPERVISOR_IMAGE_ENV).ok(),
-    );
-    if let Ok(path) = std::env::var("OPENSHELL_PODMAN_SOCKET") {
-        config.socket_path = Some(path.into());
-    }
-    Ok(config)
+) -> openshell_core::Result<podman::PodmanLaunchPlan> {
+    podman::PodmanLaunchPlan::from_table(context.driver_table()?, context.driver_dir())
 }
 
 #[cfg(all(not(target_os = "windows"), feature = "compute-driver-vm"))]

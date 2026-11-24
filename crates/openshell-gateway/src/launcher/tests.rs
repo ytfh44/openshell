@@ -518,3 +518,71 @@ fn configure_omits_what_the_gateway_does_not_have() {
     assert!(request.telemetry.is_none());
     assert!(request.resource_admission_policy_json.is_empty());
 }
+
+#[tokio::test]
+#[cfg(any(feature = "compute-driver-docker", feature = "compute-driver-podman"))]
+async fn an_unreachable_backend_is_retried_a_bounded_number_of_times() {
+    let dir = tempfile::tempdir().unwrap();
+    let counter = dir.path().join("starts");
+    let binary = script(
+        dir.path(),
+        "driver",
+        &format!("echo x >> '{}'\nexit 69", counter.display()),
+    );
+
+    let outcome = launch_tolerating_unavailable(
+        LaunchRequest {
+            name: "fake",
+            binary: &binary,
+            table: "",
+            socket_dir: &dir.path().join("run"),
+            log_level: "info",
+        },
+        ConfigureRequest::default(),
+        Arc::new(|_| {}),
+        UnavailableRetry {
+            attempts: 3,
+            delay: Duration::from_millis(5),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(outcome, LaunchOutcome::Unavailable(_)));
+    assert_eq!(std::fs::read_to_string(counter).unwrap().lines().count(), 3);
+}
+
+#[tokio::test]
+#[cfg(any(feature = "compute-driver-docker", feature = "compute-driver-podman"))]
+async fn an_invalid_table_or_a_crash_is_not_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, code) in [("invalid", 78), ("crash", 1)] {
+        let counter = dir.path().join(format!("{name}-starts"));
+        let binary = script(
+            dir.path(),
+            name,
+            &format!("echo x >> '{}'\nexit {code}", counter.display()),
+        );
+        let _ = launch_tolerating_unavailable(
+            LaunchRequest {
+                name: "fake",
+                binary: &binary,
+                table: "",
+                socket_dir: &dir.path().join(format!("{name}-run")),
+                log_level: "info",
+            },
+            ConfigureRequest::default(),
+            Arc::new(|_| {}),
+            UnavailableRetry {
+                attempts: 3,
+                delay: Duration::from_millis(5),
+            },
+        )
+        .await;
+        assert_eq!(
+            std::fs::read_to_string(counter).unwrap().lines().count(),
+            1,
+            "{name} must not be retried"
+        );
+    }
+}

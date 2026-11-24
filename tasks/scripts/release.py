@@ -37,6 +37,7 @@ HOMEBREW_TARGET = "aarch64-apple-darwin"
 HOMEBREW_CLI_ASSET = f"openshell-{HOMEBREW_TARGET}.tar.gz"
 HOMEBREW_GATEWAY_ASSET = f"openshell-gateway-{HOMEBREW_TARGET}.tar.gz"
 HOMEBREW_DRIVER_VM_ASSET = f"openshell-driver-vm-{HOMEBREW_TARGET}.tar.gz"
+HOMEBREW_DRIVER_PODMAN_ASSET = f"openshell-driver-podman-{HOMEBREW_TARGET}.tar.gz"
 HOMEBREW_PROVER_ASSET = f"openshell-prover-{HOMEBREW_TARGET}.tar.gz"
 GITHUB_RELEASE_DOWNLOADS = "https://github.com/ai-openshell/openshell/releases/download"
 LOCAL_GATEWAY_PORT = 17670
@@ -311,6 +312,7 @@ def render_homebrew_formula(
     cli_sha256: str,
     gateway_sha256: str,
     driver_vm_sha256: str,
+    driver_podman_sha256: str,
     prover_sha256: str,
 ) -> str:
     if not _RELEASE_TAG_RE.fullmatch(release_tag):
@@ -343,6 +345,11 @@ class Openshell < Formula
     sha256 "{driver_vm_sha256}"
   end
 
+  resource "openshell-driver-podman" do
+    url "{_asset_url(release_tag, HOMEBREW_DRIVER_PODMAN_ASSET)}"
+    sha256 "{driver_podman_sha256}"
+  end
+
   resource "openshell-prover" do
     url "{_asset_url(release_tag, HOMEBREW_PROVER_ASSET)}"
     sha256 "{prover_sha256}"
@@ -359,6 +366,10 @@ class Openshell < Formula
 
     resource("openshell-driver-vm").stage do
       libexec.install "openshell-driver-vm"
+    end
+
+    resource("openshell-driver-podman").stage do
+      libexec.install "openshell-driver-podman"
     end
 
     resource("openshell-prover").stage do
@@ -516,6 +527,11 @@ def generate_homebrew_formula(
         driver_vm_sha256=_required_checksum(
             checksums,
             HOMEBREW_DRIVER_VM_ASSET,
+            checksums_path,
+        ),
+        driver_podman_sha256=_required_checksum(
+            checksums,
+            HOMEBREW_DRIVER_PODMAN_ASSET,
             checksums_path,
         ),
         prover_sha256=_required_checksum(

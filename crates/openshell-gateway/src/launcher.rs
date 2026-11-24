@@ -334,6 +334,7 @@ pub struct Launched {
 }
 
 /// What to launch.
+#[derive(Clone, Copy)]
 pub struct LaunchRequest<'a> {
     /// The driver name `GetLaunchInfo` must report, such as `vm`.
     pub name: &'a str,
@@ -504,6 +505,46 @@ pub async fn launch(
         )),
         StartOutcome::Unavailable(reason) => Ok(LaunchOutcome::Unavailable(reason)),
         StartOutcome::InvalidConfig(reason) => Ok(LaunchOutcome::InvalidConfig(reason)),
+    }
+}
+
+/// How often to start a driver whose backend is unreachable.
+#[cfg(any(feature = "compute-driver-docker", feature = "compute-driver-podman"))]
+#[derive(Clone, Copy)]
+pub struct UnavailableRetry {
+    pub attempts: u32,
+    pub delay: Duration,
+}
+
+/// [`launch`], starting the driver again while its backend is unreachable.
+///
+/// Only an "unavailable" result is retried. An invalid table or a crash is
+/// final.
+#[cfg(any(feature = "compute-driver-docker", feature = "compute-driver-podman"))]
+pub async fn launch_tolerating_unavailable(
+    request: LaunchRequest<'_>,
+    configure: ConfigureRequest,
+    on_unexpected_exit: Arc<dyn Fn(String) + Send + Sync>,
+    retry: UnavailableRetry,
+) -> Result<LaunchOutcome> {
+    let attempts = retry.attempts.max(1);
+    let mut attempt = 1;
+    loop {
+        let outcome = launch(request, configure.clone(), Arc::clone(&on_unexpected_exit)).await?;
+        match outcome {
+            LaunchOutcome::Unavailable(reason) if attempt < attempts => {
+                tracing::warn!(
+                    driver = request.name,
+                    attempt,
+                    attempts,
+                    %reason,
+                    "compute driver backend is not reachable yet; retrying"
+                );
+                tokio::time::sleep(retry.delay).await;
+                attempt += 1;
+            }
+            outcome => return Ok(outcome),
+        }
     }
 }
 
