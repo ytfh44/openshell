@@ -52,6 +52,8 @@ Do not rely on this file for a full inventory. The detailed public and contribut
 | `crates/openshell-spiffe/` | SPIFFE identity types | Dependency-light SPIFFE ID mapping, claim parsing, and the sandbox identity provider interface |
 | `crates/openshell-spire/` | SPIRE adapter | Gateway-owned SPIFFE Broker API client that issues and verifies stable sandbox JWT-SVIDs |
 | `crates/openshell-tui/` | Terminal UI | Ratatui-based dashboard for monitoring |
+| `crates/openshell-driver-launch/` | Driver launch protocol | `DriverLaunch` `GetLaunchInfo`/`Configure` service and the `Deferred` wrapper for launched compute drivers |
+| `crates/openshell-driver-sdk/` | Launched-driver SDK | Stdin table reader, start-up exit codes, staged network-trust loader, telemetry and admission conversion, and gateway context |
 | `crates/openshell-driver-kubernetes-secrets/` | Kubernetes Secrets credential driver | In-process `CredentialDriver` backend for OpenShell-managed K8s Secret storage |
 | `crates/openshell-driver-vault/` | Vault credential driver | In-process `CredentialDriver` backend for Vault-compatible KV storage |
 | `crates/openshell-driver-db-credstore/` | Database credential driver | In-process `CredentialDriver` backend for gateway database credential storage |

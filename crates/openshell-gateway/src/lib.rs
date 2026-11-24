@@ -16,6 +16,8 @@ compile_error!(
      build a telemetry-free gateway with `--no-default-features --features defaults-without-telemetry`"
 );
 
+#[cfg(all(not(target_os = "windows"), feature = "driver-launcher"))]
+mod launcher;
 #[cfg(all(not(target_os = "windows"), feature = "compute-driver-vm"))]
 mod vm;
 
@@ -561,43 +563,27 @@ impl openshell_server::ComputeDriverFactory for VmFactory {
         &self,
         context: openshell_server::ComputeDriverConfigContext<'_>,
     ) -> openshell_core::Result<()> {
-        let mut config = vm_config(context)?;
-        if config.grpc_endpoint.trim().is_empty() {
-            let scheme = if context.gateway_tls_enabled() {
-                "https"
-            } else {
-                "http"
-            };
-            config.grpc_endpoint = format!("{scheme}://127.0.0.1:{}", context.gateway_port());
-        }
-        config.validate_configuration()
+        // The gateway owns the admission policy, so it validates it here.
+        self.admission_policy(context)?;
+        vm::validate(&vm_launch_plan(context)?)
     }
 
     async fn build(
         &self,
         context: openshell_server::ComputeDriverBuildContext<'_>,
     ) -> openshell_core::Result<openshell_server::ComputeDriverInstance> {
-        let mut config = vm_config(context.config_context())?;
+        let plan = vm_launch_plan(context.config_context())?;
         require_guest_tls_for_local_driver(&context, "vm")?;
-        if config.grpc_endpoint.trim().is_empty()
-            && (!context.gateway_tls_enabled() || context.guest_tls_ca().is_some())
-        {
-            let scheme = if context.gateway_tls_enabled() {
-                "https"
-            } else {
-                "http"
-            };
-            config.grpc_endpoint = format!("{scheme}://127.0.0.1:{}", context.gateway_port());
-        }
-        apply_guest_tls(&mut config.guest_tls_ca, context.guest_tls_ca());
-        let endpoint = vm::spawn(
-            context.gateway_log_level(),
+        let admission = self.admission_policy(context.config_context())?;
+        let inputs = launcher::ConfigureInputs::from_environment(
+            context.gateway_bind_address(),
+            context.guest_tls_ca(),
             context.gateway_name(),
-            &config,
-            context.otlp_config(),
             context.network_trust_bundle(),
-        )
-        .await?;
+            context.otlp_config(),
+            Some(&admission),
+        );
+        let endpoint = vm::spawn(&plan, context.gateway_log_level(), &inputs).await?;
         Ok(openshell_server::ComputeDriverInstance::ManagedRemote(
             endpoint,
         ))
@@ -605,14 +591,10 @@ impl openshell_server::ComputeDriverFactory for VmFactory {
 }
 
 #[cfg(all(not(target_os = "windows"), feature = "compute-driver-vm"))]
-fn vm_config(
+fn vm_launch_plan(
     context: openshell_server::ComputeDriverConfigContext<'_>,
-) -> openshell_core::Result<vm::VmComputeConfig> {
-    let mut config: vm::VmComputeConfig = context.driver_config()?;
-    if config.state_dir.as_os_str().is_empty() {
-        config.state_dir = vm::VmComputeConfig::default_state_dir();
-    }
-    Ok(config)
+) -> openshell_core::Result<vm::VmLaunchPlan> {
+    vm::VmLaunchPlan::from_table(context.driver_table()?, context.driver_dir())
 }
 
 #[cfg(all(

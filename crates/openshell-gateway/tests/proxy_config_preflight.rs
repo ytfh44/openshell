@@ -20,14 +20,14 @@ use std::path::PathBuf;
 use std::process::Output;
 use std::time::Duration;
 
-/// Drivers with an upstream proxy table, compiled into this gateway.
+/// Drivers with an upstream proxy table that the gateway validates itself.
+/// The launched VM driver validates its own table, which its settings tests
+/// cover.
 const DRIVERS: &[&str] = &[
     #[cfg(feature = "compute-driver-docker")]
     "docker",
     #[cfg(feature = "compute-driver-podman")]
     "podman",
-    #[cfg(feature = "compute-driver-vm")]
-    "vm",
 ];
 
 struct Fixture {
