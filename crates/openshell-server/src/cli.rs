@@ -473,7 +473,11 @@ fn prepare_server_config_with_drivers(
     let legacy_compute_driver_env_seen = resolve_legacy_driver_selector_env(args)?;
     normalize_compute_driver_socket_args(args)?;
     let compute_driver = compute_drivers
-        .select(args.compute_driver.as_deref())
+        .select_with_file(
+            args.compute_driver.as_deref(),
+            file.as_ref(),
+            &args.log_level,
+        )
         .map_err(|error| miette::miette!("{error}"))?;
     if let Some(file) = file.as_mut() {
         config_file::normalize_legacy_podman_ca_bundle(file, compute_driver.name())
