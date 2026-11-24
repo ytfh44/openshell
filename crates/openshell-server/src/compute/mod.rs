@@ -561,16 +561,36 @@ const ORPHAN_GRACE_PERIOD: Duration = Duration::from_mins(5);
 // Re-export the shared error type under the name used by this module.
 pub use openshell_core::ComputeDriverError as ComputeError;
 
-/// The process a managed driver runs as.
+/// What a managed driver process is doing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriverProcessState {
+    /// The process is running.
+    Running,
+    /// The process ended without the gateway asking it to; the text says how.
+    Exited(String),
+    /// The gateway stopped or released the process.
+    Released,
+}
+
+/// A driver process, started with tokio or with `std`.
 #[derive(Debug)]
 enum DriverChild {
     Tokio(tokio::process::Child),
+    Std(std::process::Child),
 }
 
 impl DriverChild {
     fn id(&self) -> Option<u32> {
         match self {
             Self::Tokio(child) => child.id(),
+            Self::Std(child) => Some(child.id()),
+        }
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        match self {
+            Self::Tokio(child) => child.try_wait(),
+            Self::Std(child) => child.try_wait(),
         }
     }
 }
@@ -579,6 +599,8 @@ impl DriverChild {
 pub struct ManagedDriverProcess {
     child: std::sync::Mutex<Option<DriverChild>>,
     socket_path: PathBuf,
+    /// The socket's directory belongs to this process and goes with it.
+    owns_socket_dir: bool,
 }
 
 impl ManagedDriverProcess {
@@ -587,6 +609,38 @@ impl ManagedDriverProcess {
         Self {
             child: std::sync::Mutex::new(Some(DriverChild::Tokio(child))),
             socket_path,
+            owns_socket_dir: false,
+        }
+    }
+
+    /// Manage a driver started with `std::process`, such as one that
+    /// auto-detection started and kept. The process is stopped when this
+    /// handle drops, and the directory holding `socket_path` is removed with
+    /// it, so it must be a directory made for this process alone.
+    #[cfg(unix)]
+    pub fn from_std(child: std::process::Child, socket_path: PathBuf) -> Self {
+        Self {
+            child: std::sync::Mutex::new(Some(DriverChild::Std(child))),
+            socket_path,
+            owns_socket_dir: true,
+        }
+    }
+
+    /// Check whether the process is still running without waiting for it.
+    /// An exit the gateway caused through shutdown reports
+    /// [`DriverProcessState::Released`], not [`DriverProcessState::Exited`].
+    pub fn poll_exit(&self) -> DriverProcessState {
+        let mut child = self
+            .child
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(process) = child.as_mut() else {
+            return DriverProcessState::Released;
+        };
+        match process.try_wait() {
+            Ok(None) => DriverProcessState::Running,
+            Ok(Some(status)) => DriverProcessState::Exited(format!("exited with {status}")),
+            Err(error) => DriverProcessState::Exited(format!("could not be polled: {error}")),
         }
     }
 
@@ -631,17 +685,119 @@ impl ManagedDriverProcess {
                     }
                 }
             }
+            DriverChild::Std(mut child) => tokio::task::spawn_blocking(move || {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) => return Ok(()),
+                        Ok(None) if Instant::now() < deadline => {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        Ok(None) => {
+                            child.kill().map_err(|err| {
+                                format!("failed to kill managed compute driver: {err}")
+                            })?;
+                            return child.wait().map(|_| ()).map_err(|err| {
+                                format!("failed to reap managed compute driver: {err}")
+                            });
+                        }
+                        Err(err) => {
+                            return Err(format!(
+                                "failed to wait for managed compute driver: {err}"
+                            ));
+                        }
+                    }
+                }
+            })
+            .await
+            .map_err(|err| format!("failed to wait for managed compute driver: {err}"))?,
         }
     }
 }
 
 impl Drop for ManagedDriverProcess {
     fn drop(&mut self) {
-        if let Ok(mut child) = self.child.lock() {
-            let _ = child.take();
+        if let Ok(mut child) = self.child.lock()
+            && let Some(DriverChild::Std(mut process)) = child.take()
+        {
+            // Unlike a tokio child, a std child is not killed on drop.
+            let _ = process.kill();
+            let _ = process.wait();
         }
         let _ = std::fs::remove_file(&self.socket_path);
+        if self.owns_socket_dir
+            && let Some(dir) = self.socket_path.parent()
+        {
+            let _ = std::fs::remove_dir(dir);
+        }
     }
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn managed_driver_reports_unexpected_exit_but_not_shutdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let spawn = |script: &str| {
+        tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    };
+
+    let exits = ManagedDriverProcess::new(spawn("exit 3"), dir.path().join("a.sock"));
+    let mut state = exits.poll_exit();
+    for _ in 0..100 {
+        if state != DriverProcessState::Running {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        state = exits.poll_exit();
+    }
+    assert!(matches!(&state, DriverProcessState::Exited(text) if text.contains('3')));
+
+    let stopped = ManagedDriverProcess::new(spawn("sleep 60"), dir.path().join("b.sock"));
+    assert_eq!(stopped.poll_exit(), DriverProcessState::Running);
+    stopped.shutdown().await.unwrap();
+    assert_eq!(stopped.poll_exit(), DriverProcessState::Released);
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn a_std_driver_is_stopped_on_shutdown_and_when_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let spawn = || {
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap()
+    };
+
+    let stopped = ManagedDriverProcess::from_std(spawn(), dir.path().join("a.sock"));
+    assert_eq!(stopped.poll_exit(), DriverProcessState::Running);
+    stopped.shutdown().await.unwrap();
+    assert_eq!(stopped.poll_exit(), DriverProcessState::Released);
+
+    let child = spawn();
+    let pid = child.id();
+    let launch_dir = dir.path().join("launch-b");
+    std::fs::create_dir(&launch_dir).unwrap();
+    drop(ManagedDriverProcess::from_std(
+        child,
+        launch_dir.join("driver.sock"),
+    ));
+    assert!(
+        !launch_dir.exists(),
+        "the launch directory goes with the handle"
+    );
+    let alive = std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success();
+    assert!(!alive, "dropping the handle must stop the process");
 }
 
 #[cfg(all(test, unix))]

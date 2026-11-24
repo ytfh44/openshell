@@ -1800,8 +1800,8 @@ async fn terminate_signal() {
 }
 
 pub use compute::{
-    AcquiredRemoteDriverEndpoint, DriverWatchStream, ManagedDriverProcess, SharedComputeDriver,
-    SharedComputeDriverAppEndpoints, SharedComputeDriverConfigurationUpdates,
+    AcquiredRemoteDriverEndpoint, DriverProcessState, DriverWatchStream, ManagedDriverProcess,
+    SharedComputeDriver, SharedComputeDriverAppEndpoints, SharedComputeDriverConfigurationUpdates,
 };
 
 /// Driver instance returned by a compiled compute-driver factory.
@@ -2144,6 +2144,21 @@ impl ComputeDriverConfigContext<'_> {
     #[must_use]
     pub fn gateway_tls_enabled(&self) -> bool {
         self.driver_startup.gateway_tls_enabled
+    }
+
+    /// `driver_dir` from `[openshell.gateway]`: where launched compute-driver
+    /// binaries are searched for first.
+    #[must_use]
+    pub fn driver_dir(&self) -> Option<&Path> {
+        self.driver_startup
+            .file
+            .and_then(|file| file.openshell.gateway.driver_dir.as_deref())
+    }
+
+    /// The selected driver's merged TOML table, undecoded. A launched driver
+    /// parses and validates it itself.
+    pub fn driver_table(&self) -> Result<toml::map::Map<String, toml::Value>> {
+        compute::driver_config::driver_table_from_context(self.driver_startup, self.driver_name)
     }
 
     /// Deserialize the selected driver's merged TOML table.

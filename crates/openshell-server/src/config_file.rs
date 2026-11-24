@@ -214,6 +214,13 @@ pub struct GatewayFileSection {
     #[serde(default)]
     pub guest_tls_ca: Option<PathBuf>,
 
+    // ── Launched compute drivers ─────────────────────────────────────────
+    /// Directory searched first for launched compute-driver binaries such as
+    /// `openshell-driver-vm`. The gateway owns it; a `driver_dir` in a
+    /// `[openshell.drivers.<name>]` table is deprecated.
+    #[serde(default)]
+    pub driver_dir: Option<PathBuf>,
+
     // ── TLS toggle ───────────────────────────────────────────────────────
     /// When `true`, the gateway listens on plaintext HTTP and ignores any
     /// `[openshell.gateway.tls]` table. Mirrors `--disable-tls`.
