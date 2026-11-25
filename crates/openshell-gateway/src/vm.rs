@@ -185,7 +185,7 @@ pub async fn spawn(
 ) -> Result<AcquiredRemoteDriverEndpoint> {
     let binary = resolve_compute_driver_bin(plan.driver_dir.as_deref())?;
     prepare_vm_state_dir(&plan.state_dir, rustix::process::geteuid().as_raw())?;
-    let configure = inputs.request();
+    let configure = inputs.configure_call();
     let outcome = launcher::launch(
         LaunchRequest {
             name: "vm",

@@ -422,7 +422,8 @@ impl openshell_server::ComputeDriverFactory for DockerFactory {
             context.network_trust_bundle(),
             context.otlp_config(),
             Some(&admission),
-        );
+        )
+        .with_configure_timeout(context.image_preparation_timeout());
         // Auto-detection already started the driver; configure that process.
         let detected = context.take_detected_driver::<launcher::Started>();
         let endpoint = docker::DOCKER
@@ -486,7 +487,8 @@ impl openshell_server::ComputeDriverFactory for PodmanFactory {
             context.network_trust_bundle(),
             context.otlp_config(),
             Some(&admission),
-        );
+        )
+        .with_configure_timeout(context.image_preparation_timeout());
         let endpoint = podman::PODMAN
             .spawn(
                 &plan,
@@ -556,7 +558,8 @@ impl openshell_server::ComputeDriverFactory for VmFactory {
             context.network_trust_bundle(),
             context.otlp_config(),
             Some(&admission),
-        );
+        )
+        .with_configure_timeout(context.image_preparation_timeout());
         let endpoint = vm::spawn(&plan, context.gateway_log_level(), &inputs).await?;
         Ok(openshell_server::ComputeDriverInstance::ManagedRemote(
             endpoint,

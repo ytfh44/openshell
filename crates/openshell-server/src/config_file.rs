@@ -159,6 +159,8 @@ pub struct GatewayFileSection {
     #[serde(default)]
     pub max_service_connections_per_sandbox: Option<u32>,
     /// Absolute preparation budget for new attempts; existing deadlines persist.
+    /// It also bounds how long a launched driver may take to start, which
+    /// includes pulling its supervisor and runtime images.
     #[serde(default)]
     pub image_preparation_timeout_seconds: Option<u32>,
     /// Admission repair window in seconds, between 1 and 86400.

@@ -30,7 +30,9 @@ use tower::service_fn;
 const SOCKET_NAME: &str = "driver.sock";
 /// How long a driver has to accept a connection after it starts.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
-const CONFIGURE_TIMEOUT: Duration = Duration::from_mins(2);
+/// How long a driver has to answer `Configure` when the caller sets no budget.
+/// Constructing the driver can pull its supervisor and runtime images.
+pub const DEFAULT_CONFIGURE_TIMEOUT: Duration = Duration::from_mins(30);
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(20);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const EXIT_WATCH_INTERVAL: Duration = Duration::from_secs(1);
@@ -454,10 +456,32 @@ pub fn start(request: &LaunchRequest<'_>) -> Result<StartOutcome> {
     }
 }
 
+/// A `Configure` call: the request and how long the driver has to answer it.
+///
+/// Constructing a driver can pull its images, so the deadline is the
+/// gateway's image preparation budget, not a fixed short time.
+#[derive(Clone)]
+pub struct ConfigureCall {
+    /// The gateway-owned values to deliver. The protocol version is filled in
+    /// when the request is sent.
+    pub request: ConfigureRequest,
+    /// How long the driver has to answer.
+    pub timeout: Duration,
+}
+
+impl From<ConfigureRequest> for ConfigureCall {
+    fn from(request: ConfigureRequest) -> Self {
+        Self {
+            request,
+            timeout: DEFAULT_CONFIGURE_TIMEOUT,
+        }
+    }
+}
+
 /// Configure a driver that `start` returned and begin watching its process.
 pub async fn finish(
     mut started: Started,
-    configure: ConfigureRequest,
+    configure: ConfigureCall,
     on_unexpected_exit: Arc<dyn Fn(String) + Send + Sync>,
 ) -> Result<Launched> {
     let channel = connect(&started.socket)
@@ -492,7 +516,7 @@ pub async fn finish(
 /// Start a driver and configure it.
 pub async fn launch(
     request: LaunchRequest<'_>,
-    configure: ConfigureRequest,
+    configure: ConfigureCall,
     on_unexpected_exit: Arc<dyn Fn(String) + Send + Sync>,
 ) -> Result<LaunchOutcome> {
     let owned = (
@@ -537,7 +561,7 @@ pub struct UnavailableRetry {
 #[cfg(any(feature = "compute-driver-docker", feature = "compute-driver-podman"))]
 pub async fn launch_tolerating_unavailable(
     request: LaunchRequest<'_>,
-    configure: ConfigureRequest,
+    configure: ConfigureCall,
     on_unexpected_exit: Arc<dyn Fn(String) + Send + Sync>,
     retry: UnavailableRetry,
 ) -> Result<LaunchOutcome> {
@@ -563,7 +587,7 @@ pub async fn launch_tolerating_unavailable(
 }
 
 /// Check the driver's identity and protocol, then configure it.
-pub async fn handshake(channel: &Channel, name: &str, configure: ConfigureRequest) -> Result<()> {
+pub async fn handshake(channel: &Channel, name: &str, configure: ConfigureCall) -> Result<()> {
     let mut client = DriverLaunchClient::new(channel.clone());
     let info = client
         .get_launch_info(GetLaunchInfoRequest {})
@@ -584,9 +608,9 @@ pub async fn handshake(channel: &Channel, name: &str, configure: ConfigureReques
     }
     let mut request = tonic::Request::new(ConfigureRequest {
         protocol_version: PROTOCOL_VERSION,
-        ..configure
+        ..configure.request
     });
-    request.set_timeout(CONFIGURE_TIMEOUT);
+    request.set_timeout(configure.timeout);
     client.configure(request).await.map_err(|status| {
         Error::execution(format!("configuring compute driver '{name}': {status}"))
     })?;
@@ -714,6 +738,8 @@ pub struct ConfigureInputs<'a> {
     pub admission: Option<&'a openshell_core::resource_admission::DriverAdmissionConfig>,
     pub sandbox_runtime_image: Option<String>,
     pub supervisor_image: Option<String>,
+    /// How long the driver has to answer `Configure`.
+    pub configure_timeout: Duration,
 }
 
 impl<'a> ConfigureInputs<'a> {
@@ -737,6 +763,24 @@ impl<'a> ConfigureInputs<'a> {
             sandbox_runtime_image: std::env::var(openshell_core::config::SANDBOX_RUNTIME_IMAGE_ENV)
                 .ok(),
             supervisor_image: std::env::var(openshell_core::config::SUPERVISOR_IMAGE_ENV).ok(),
+            configure_timeout: DEFAULT_CONFIGURE_TIMEOUT,
+        }
+    }
+
+    /// Give the driver `timeout` to answer `Configure`. Constructing a driver
+    /// can pull its images, so this is the gateway's image preparation budget.
+    #[must_use]
+    pub fn with_configure_timeout(mut self, timeout: Duration) -> Self {
+        self.configure_timeout = timeout;
+        self
+    }
+
+    /// The `Configure` call for these inputs: the request and its deadline.
+    #[must_use]
+    pub fn configure_call(&self) -> ConfigureCall {
+        ConfigureCall {
+            request: self.request(),
+            timeout: self.configure_timeout,
         }
     }
 

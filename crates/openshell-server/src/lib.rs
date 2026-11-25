@@ -2373,9 +2373,19 @@ pub struct ComputeDriverBuildContext<'a> {
     supervisor_pool_limits: openshell_supervisor_control::PoolLimits,
     /// The driver this driver's detection started, if it did.
     detected: DetectedSlot,
+    /// The gateway's budget for preparing images
+    /// (`image_preparation_timeout_seconds`).
+    image_preparation_timeout: Duration,
 }
 
 impl ComputeDriverBuildContext<'_> {
+    /// The gateway's budget for preparing images, which includes the images
+    /// a driver pulls while it is constructed.
+    #[must_use]
+    pub fn image_preparation_timeout(&self) -> Duration {
+        self.image_preparation_timeout
+    }
+
     /// Take the driver process that auto-detection started and kept running
     /// for this driver, if its type is `T`. Detection happens once, so a
     /// second call returns `None`.
@@ -2578,6 +2588,9 @@ async fn build_compute_runtime(
                     .and_then(|pool| pool.recovery_timeout_secs),
                 supervisor_pool_limits,
                 detected: registration.detected.clone(),
+                image_preparation_timeout: Duration::from_secs(u64::from(
+                    config.image_preparation_timeout_seconds,
+                )),
             };
             let (instance, image_updates) = registration
                 .factory
@@ -3270,6 +3283,7 @@ mod tests {
                 shutdown_rx: shutdown_rx.clone(),
                 shared_supervision: &shared,
                 detected: crate::DetectedSlot::default(),
+                image_preparation_timeout: Duration::from_mins(30),
                 app_endpoint_resolver: &std::sync::OnceLock::new(),
                 supervisor_recovery_timeout_secs: configured,
                 supervisor_pool_limits: limits,

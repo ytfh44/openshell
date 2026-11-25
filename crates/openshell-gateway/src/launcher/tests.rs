@@ -39,7 +39,7 @@ async fn run(binary: &Path, table: &str, dir: &Path) -> Result<LaunchOutcome> {
             socket_dir: &dir.join("run"),
             log_level: "info",
         },
-        ConfigureRequest::default(),
+        ConfigureRequest::default().into(),
         Arc::new(|_| {}),
     )
     .await
@@ -377,7 +377,7 @@ async fn the_handshake_configures_the_driver_it_expects() {
         ..Default::default()
     };
 
-    handshake(&channel, "fake", configure).await.unwrap();
+    handshake(&channel, "fake", configure.into()).await.unwrap();
 
     let received = seen.lock().unwrap().take().expect("configured");
     assert_eq!(received.protocol_version, PROTOCOL_VERSION);
@@ -385,7 +385,7 @@ async fn the_handshake_configures_the_driver_it_expects() {
 
     let seen = Arc::new(Mutex::new(None));
     let channel = serve_launch(&dir.path().join("b.sock"), "other", Arc::clone(&seen)).await;
-    let error = handshake(&channel, "fake", ConfigureRequest::default())
+    let error = handshake(&channel, "fake", ConfigureRequest::default().into())
         .await
         .unwrap_err()
         .to_string();
@@ -463,6 +463,7 @@ fn configure_carries_the_gateway_metadata_the_argv_used_to() {
         admission: Some(&admission),
         sandbox_runtime_image: Some("runtime:1".to_string()),
         supervisor_image: None,
+        configure_timeout: DEFAULT_CONFIGURE_TIMEOUT,
     };
 
     let request = inputs.request();
@@ -509,6 +510,7 @@ fn configure_omits_what_the_gateway_does_not_have() {
         admission: None,
         sandbox_runtime_image: None,
         supervisor_image: None,
+        configure_timeout: DEFAULT_CONFIGURE_TIMEOUT,
     };
 
     let request = inputs.request();
@@ -538,7 +540,7 @@ async fn an_unreachable_backend_is_retried_a_bounded_number_of_times() {
             socket_dir: &dir.path().join("run"),
             log_level: "info",
         },
-        ConfigureRequest::default(),
+        ConfigureRequest::default().into(),
         Arc::new(|_| {}),
         UnavailableRetry {
             attempts: 3,
@@ -571,7 +573,7 @@ async fn an_invalid_table_or_a_crash_is_not_retried() {
                 socket_dir: &dir.path().join(format!("{name}-run")),
                 log_level: "info",
             },
-            ConfigureRequest::default(),
+            ConfigureRequest::default().into(),
             Arc::new(|_| {}),
             UnavailableRetry {
                 attempts: 3,
@@ -585,4 +587,20 @@ async fn an_invalid_table_or_a_crash_is_not_retried() {
             "{name} must not be retried"
         );
     }
+}
+
+#[test]
+fn the_configure_call_carries_the_gateways_budget() {
+    let inputs = ConfigureInputs::from_environment(
+        "127.0.0.1:8080".parse().unwrap(),
+        None,
+        "gw",
+        None,
+        None,
+        None,
+    );
+    assert_eq!(inputs.configure_call().timeout, DEFAULT_CONFIGURE_TIMEOUT);
+
+    let inputs = inputs.with_configure_timeout(Duration::from_mins(45));
+    assert_eq!(inputs.configure_call().timeout, Duration::from_mins(45));
 }

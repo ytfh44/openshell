@@ -153,7 +153,7 @@ impl LocalDriver {
         inputs: &ConfigureInputs<'_>,
     ) -> Result<AcquiredRemoteDriverEndpoint> {
         let name = self.name;
-        let configure = inputs.request();
+        let configure = inputs.configure_call();
         let on_exit = launcher::exit_gateway_on_driver_exit();
         let launched = if let Some(started) = detected {
             launcher::finish(started, configure, on_exit).await?
