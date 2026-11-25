@@ -724,7 +724,7 @@ mod tests {
         assert_eq!(supervisor_host_methods, BTreeSet::from(["Attach"]));
         assert_eq!(
             driver_launch_methods,
-            BTreeSet::from(["Configure", "GetLaunchInfo"])
+            BTreeSet::from(["Configure", "GetLaunchInfo", "Shutdown"])
         );
         for signature in PROVIDER_READINESS_RPC_SIGNATURES {
             assert!(
@@ -746,7 +746,7 @@ mod tests {
         }
         assert_eq!(
             compiled_method_count,
-            123 + PROVIDER_READINESS_RPC_SIGNATURES.len()
+            124 + PROVIDER_READINESS_RPC_SIGNATURES.len()
                 + PEER_OWNER_RPC_SIGNATURES.len()
                 + PEER_CONFIG_RPC_SIGNATURES.len()
                 + isolation_methods.len()

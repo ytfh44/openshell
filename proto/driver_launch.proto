@@ -18,9 +18,17 @@ service DriverLaunch {
   rpc GetLaunchInfo(GetLaunchInfoRequest) returns (GetLaunchInfoResponse);
 
   // Deliver gateway-owned metadata. Succeeds at most once. A call that fails
-  // with INVALID_ARGUMENT or FAILED_PRECONDITION leaves the driver running and
-  // the gateway may retry. A request is at most 1 MiB.
+  // leaves the driver running and unconfigured, and the gateway may retry. A
+  // request is at most 1 MiB.
   rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+
+  // Release the driver: the gateway has finished with it. The driver answers,
+  // finishes the calls in flight and exits. Until it is released, or its
+  // gateway is gone, a driver defers a stop signal that reaches it from
+  // elsewhere, such as a service manager that signals every process of the
+  // gateway's unit. That keeps the gateway's own shutdown work, such as
+  // stopping sandboxes through the driver, able to finish first.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
 }
 
 message GetLaunchInfoRequest {}
@@ -53,6 +61,10 @@ message ConfigureRequest {
 }
 
 message ConfigureResponse {}
+
+message ShutdownRequest {}
+
+message ShutdownResponse {}
 
 message GatewayContext {
   uint32 gateway_port = 1;

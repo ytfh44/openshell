@@ -18,9 +18,11 @@ use std::time::{Duration, Instant};
 use hyper_util::rt::TokioIo;
 use openshell_core::{Error, Result};
 use openshell_driver_sdk::launch::proto::driver_launch_client::DriverLaunchClient;
-use openshell_driver_sdk::launch::{ConfigureRequest, GetLaunchInfoRequest, PROTOCOL_VERSION};
+use openshell_driver_sdk::launch::{
+    ConfigureRequest, GetLaunchInfoRequest, PROTOCOL_VERSION, ShutdownRequest,
+};
 use openshell_driver_sdk::{StartKind, StartReport};
-use openshell_server::{DriverProcessState, ManagedDriverProcess};
+use openshell_server::{DriverProcessState, GracefulStop, ManagedDriverProcess};
 use tokio::net::UnixStream;
 use tonic::transport::{Channel, Endpoint};
 use tower::service_fn;
@@ -467,10 +469,22 @@ pub async fn finish(
         .take()
         .expect("a started driver holds its process");
     started.handed_off = true;
-    let process = Arc::new(ManagedDriverProcess::from_std(
-        child,
-        started.socket.clone(),
-    ));
+    // Release the driver through its own protocol before the process is
+    // signalled, so it finishes the calls in flight first.
+    let release_channel = channel.clone();
+    let process = Arc::new(
+        ManagedDriverProcess::from_std(child, started.socket.clone()).with_graceful_stop(
+            GracefulStop::new(move || {
+                let channel = release_channel.clone();
+                async move {
+                    DriverLaunchClient::new(channel)
+                        .shutdown(ShutdownRequest {})
+                        .await
+                        .is_ok()
+                }
+            }),
+        ),
+    );
     watch_process(started.name.clone(), &process, on_unexpected_exit);
     Ok(Launched { channel, process })
 }

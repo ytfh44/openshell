@@ -93,8 +93,6 @@ async fn run(
         .map_err(StartResult::error)?;
     let _cleanup =
         openshell_core::external_driver_socket::SocketCleanup::new(args.bind_socket.clone());
-    #[cfg(unix)]
-    openshell_driver_sdk::watch_parent(args.expected_peer_pid);
 
     let log_level = args.log_level.clone();
     let launch = Launch::new(
@@ -110,6 +108,9 @@ async fn run(
             async move { apply_configure(settings, &log_level, &tracing, request).await }
         },
     );
+    let shutdown = launch.shutdown();
+    #[cfg(unix)]
+    openshell_driver_sdk::watch_parent(args.expected_peer_pid, shutdown.clone());
     // One configured service backs both gRPC services.
     let compute = Deferred::new(launch.configured(), |service: &ComputeDriverService| {
         ComputeDriverServer::new(service.clone())
@@ -128,7 +129,11 @@ async fn run(
         .serve_with_incoming_shutdown(
             openshell_core::external_driver_socket::SameUidUnixIncoming::new(listener)
                 .expecting_peer_pid(args.expected_peer_pid),
-            crate::shutdown_signal(),
+            openshell_driver_sdk::stop_when_released(
+                shutdown,
+                crate::shutdown_signal(),
+                openshell_driver_sdk::EXTERNAL_STOP_GRACE,
+            ),
         )
         .await
         .map_err(|error| StartResult::error(format!("serve: {error}")))

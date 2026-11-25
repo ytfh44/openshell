@@ -18,7 +18,9 @@ use openshell_core::proto::compute::v1::UpdateSandboxConfigurationRequest;
 use openshell_core::proto::compute::v1::compute_driver_client::ComputeDriverClient;
 use openshell_core::proto::compute::v1::compute_driver_configuration_updates_client::ComputeDriverConfigurationUpdatesClient;
 use openshell_driver_sdk::launch::proto::driver_launch_client::DriverLaunchClient;
-use openshell_driver_sdk::launch::{ConfigureRequest, GetLaunchInfoRequest, PROTOCOL_VERSION};
+use openshell_driver_sdk::launch::{
+    ConfigureRequest, GetLaunchInfoRequest, PROTOCOL_VERSION, ShutdownRequest,
+};
 use tonic::Code;
 use tonic::transport::{Channel, Endpoint};
 
@@ -274,4 +276,42 @@ fn docker_host_finds_the_socket_when_the_table_sets_none() {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[tokio::test]
+async fn a_stop_signal_waits_for_the_gateway_to_release_the_driver() {
+    let mut serving = serve().await;
+    let signalled = Command::new("kill")
+        .args(["-TERM", &serving.child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(signalled.success());
+
+    // The driver defers the signal, so the gateway can still use it.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        serving.child.try_wait().unwrap().is_none(),
+        "the driver stopped on SIGTERM before the gateway released it"
+    );
+    DriverLaunchClient::new(serving.channel.clone())
+        .get_launch_info(GetLaunchInfoRequest {})
+        .await
+        .unwrap();
+
+    DriverLaunchClient::new(serving.channel.clone())
+        .shutdown(ShutdownRequest {})
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = serving.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the driver did not stop after Shutdown"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert!(status.success(), "{status}");
 }

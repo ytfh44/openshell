@@ -124,6 +124,7 @@ async fn run(
             async move { apply_configure(settings, &log_level, gpu, &tracing, request).await }
         },
     );
+    let shutdown = launch.shutdown();
     let configured = launch.configured();
     let deferred = Deferred::new(configured.clone(), |driver: &VmDriver| {
         ComputeDriverServer::new(driver.clone())
@@ -136,7 +137,11 @@ async fn run(
         .add_service(deferred)
         .serve_with_incoming_shutdown(
             crate::listener::AuthenticatedUnixIncoming::new(listener, Some(args.expected_peer_pid)),
-            crate::listener::shutdown_signal(),
+            openshell_driver_sdk::stop_when_released(
+                shutdown,
+                crate::listener::shutdown_signal(),
+                openshell_driver_sdk::EXTERNAL_STOP_GRACE,
+            ),
         )
         .await;
     let _ = std::fs::remove_file(&args.bind_socket);

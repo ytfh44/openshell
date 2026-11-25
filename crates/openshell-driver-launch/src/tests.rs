@@ -198,3 +198,39 @@ fn configure_requests_round_trip() {
     let decoded = decode_configure_request(&encode_configure_request(&original)).unwrap();
     assert_eq!(decoded, original);
 }
+
+#[tokio::test]
+async fn shutdown_sets_the_signal_the_server_stops_on() {
+    let launch = Launch::new(info(), |_| async { Ok(()) });
+    let shutdown = launch.shutdown();
+    assert!(!shutdown.is_requested());
+    let mut client = DriverLaunchClient::connect(serve(launch.into_server()).await)
+        .await
+        .unwrap();
+
+    client.shutdown(ShutdownRequest {}).await.unwrap();
+
+    assert!(shutdown.is_requested());
+    // Waiting after the request returns at once.
+    tokio::time::timeout(std::time::Duration::from_secs(5), shutdown.requested())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn requested_waits_until_the_signal_is_set() {
+    let shutdown = Shutdown::new();
+    let waiting = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move { shutdown.requested().await }
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+
+    shutdown.request();
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+}

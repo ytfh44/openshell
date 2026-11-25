@@ -97,8 +97,6 @@ async fn run(
         .map_err(StartResult::error)?;
     let _cleanup =
         openshell_core::external_driver_socket::SocketCleanup::new(args.bind_socket.clone());
-    #[cfg(unix)]
-    openshell_driver_sdk::watch_parent(args.expected_peer_pid);
 
     let launch = Launch::new(
         LaunchInfo {
@@ -112,6 +110,9 @@ async fn run(
             async move { apply_configure(settings, &tracing, request).await }
         },
     );
+    let shutdown = launch.shutdown();
+    #[cfg(unix)]
+    openshell_driver_sdk::watch_parent(args.expected_peer_pid, shutdown.clone());
     let deferred = Deferred::new(launch.configured(), |service: &ComputeDriverService| {
         ComputeDriverServer::new(service.clone())
     });
@@ -124,7 +125,11 @@ async fn run(
         .serve_with_incoming_shutdown(
             openshell_core::external_driver_socket::SameUidUnixIncoming::new(listener)
                 .expecting_peer_pid(args.expected_peer_pid),
-            crate::shutdown_signal(),
+            openshell_driver_sdk::stop_when_released(
+                shutdown,
+                crate::shutdown_signal(),
+                openshell_driver_sdk::EXTERNAL_STOP_GRACE,
+            ),
         )
         .await
         .map_err(|error| StartResult::error(format!("serve: {error}")))

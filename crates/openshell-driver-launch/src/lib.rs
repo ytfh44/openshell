@@ -29,7 +29,8 @@ pub mod proto {
 pub use proto::driver_launch_server::{DriverLaunch, DriverLaunchServer};
 pub use proto::{
     CollectorTls, ConfigureRequest, ConfigureResponse, GatewayContext, GetLaunchInfoRequest,
-    GetLaunchInfoResponse, ImageOverrides, NetworkTrust, OtlpExport, Telemetry,
+    GetLaunchInfoResponse, ImageOverrides, NetworkTrust, OtlpExport, ShutdownRequest,
+    ShutdownResponse, Telemetry,
 };
 
 /// The launch protocol version this crate implements.
@@ -51,6 +52,46 @@ pub fn decode_configure_request(bytes: &[u8]) -> Result<ConfigureRequest, Status
     }
     prost::Message::decode(bytes)
         .map_err(|error| Status::invalid_argument(format!("invalid ConfigureRequest: {error}")))
+}
+
+/// Set when the gateway releases the driver with `Shutdown`.
+///
+/// A launched driver stops serving once this is set, once its gateway is gone,
+/// or once a stop signal from elsewhere has waited out a grace period.
+/// Cloning shares the same signal.
+#[derive(Clone, Debug)]
+pub struct Shutdown(Arc<tokio::sync::watch::Sender<bool>>);
+
+impl Default for Shutdown {
+    fn default() -> Self {
+        Self(Arc::new(tokio::sync::watch::channel(false).0))
+    }
+}
+
+impl Shutdown {
+    /// A signal that has not been set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the signal.
+    pub fn request(&self) {
+        self.0.send_replace(true);
+    }
+
+    /// Whether the signal has been set.
+    #[must_use]
+    pub fn is_requested(&self) -> bool {
+        *self.0.borrow()
+    }
+
+    /// Wait until the signal is set.
+    pub async fn requested(&self) {
+        let mut receiver = self.0.subscribe();
+        // The sender lives as long as this handle, so the wait cannot fail.
+        let _ = receiver.wait_for(|requested| *requested).await;
+    }
 }
 
 /// State a driver builds from a successful `Configure`.
@@ -101,6 +142,7 @@ pub struct Launch<S> {
     configured: Configured<S>,
     configure: ConfigureFn<S>,
     gate: tokio::sync::Mutex<()>,
+    shutdown: Shutdown,
 }
 
 impl<S: Send + Sync + 'static> Launch<S> {
@@ -114,6 +156,7 @@ impl<S: Send + Sync + 'static> Launch<S> {
             configured: Configured::default(),
             configure: Box::new(move |request| Box::pin(configure(request))),
             gate: tokio::sync::Mutex::new(()),
+            shutdown: Shutdown::new(),
         }
     }
 
@@ -121,6 +164,12 @@ impl<S: Send + Sync + 'static> Launch<S> {
     #[must_use]
     pub fn configured(&self) -> Configured<S> {
         self.configured.clone()
+    }
+
+    /// The signal `Shutdown` sets, for the driver's server to stop on.
+    #[must_use]
+    pub fn shutdown(&self) -> Shutdown {
+        self.shutdown.clone()
     }
 
     /// The gRPC service, limited to [`MAX_CONFIGURE_REQUEST_BYTES`].
@@ -172,6 +221,14 @@ impl<S: Send + Sync + 'static> DriverLaunch for Launch<S> {
         // The gate makes this the only writer.
         let _ = self.configured.0.set(state);
         Ok(Response::new(ConfigureResponse {}))
+    }
+
+    async fn shutdown(
+        &self,
+        _request: Request<ShutdownRequest>,
+    ) -> Result<Response<ShutdownResponse>, Status> {
+        self.shutdown.request();
+        Ok(Response::new(ShutdownResponse {}))
     }
 }
 

@@ -1569,6 +1569,8 @@ Set `driver_dir` in `[openshell.gateway]`. A `driver_dir` in a driver table is d
 
 When no driver is selected, the gateway tries Kubernetes, then Podman, then Docker. For Podman and Docker it starts the driver with the operator's table, so a configured `socket_path` is honored. The first driver that binds its socket is kept and configured, so detection never starts a driver it then stops. For Docker it does the same with the Docker table. A table that is invalid, or a socket that is not reachable, moves detection to the next candidate and logs the reason. A driver that crashes or times out stops startup. If a driver is selected by name, any such failure stops startup, except that Podman is started again a few times while its socket is unreachable, as the in-process driver retried.
 
+On shutdown, the gateway stops sandboxes through each launched driver and then releases the driver with the launch protocol's `Shutdown` call. A driver defers a `SIGTERM` or `SIGINT` that reaches it from elsewhere, such as the signal a service manager sends to every process of the gateway's unit, until the gateway releases it, the gateway exits, or 30 seconds pass. Sandboxes therefore stop even when the whole unit is signalled.
+
 Each launch gets its own private socket directory, which goes away with the driver. If a launched driver exits while the gateway is running, the gateway logs an error and exits with a nonzero status. Running sandboxes continue.
 
 `openshell-gateway config preflight` runs `openshell-driver-<name> preflight` with the table. The driver checks the table and contacts no backend.
